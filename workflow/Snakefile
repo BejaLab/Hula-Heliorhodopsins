@@ -1,0 +1,20 @@
+
+help = """
+This is the gene neighbors workflow, it includes two parts:
+* initial screen for heliorhodopsins and DTE rhodopsins: snakemake -c[cores] -s workdlow/1-Search.snake
+* actual analysis: snakemake -c[cores] -s workdlow/2-Analysis.snake
+
+Below we do a brief check for the presence of key input files.
+"""
+print(help)
+
+rule check_files:
+	input:
+		"Pfam/Pfam-A.hmm",
+		expand("hmm_profiles/{hmm}.{ext}", hmm = [ "Heliorhodopsin", "PR_XR" ], ext = [ "hmm", "motif" ]),
+		"wgs",
+		"data",
+		"manual/database",
+		"manual/additions.gff",
+		"manual/duplications.txt"
+

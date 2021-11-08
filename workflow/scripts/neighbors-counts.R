@@ -3,20 +3,24 @@ library(dplyr)
 library(tidyr)
 library(ggplot2)
 
-gff <- read.table("gff.tsv", header = T) %>%
+gff_file <- unlist(snakemake@input)
+filtered_file <- unlist(snakemake@output["filtered"])
+all_file <- unlist(snakemake@output["all"])
+
+gff <- read.table(gff_file, header = T) %>%
 	group_by(cluster1, cluster2) %>%
 	fill(cluster3, .direction = "downup") %>%
 	group_by(cluster1, cluster3) %>%
 	fill(cluster2, .direction = "downup") %>%
 	ungroup %>%
+	distinct(cluster1, cluster2, cluster3, to.target, .keep_all = T) %>%
+	filter(target.gene %in% gene) %>%
 	group_by(hmm, Taxon, Group) %>%
 	filter(!is.na(Taxon)) %>%
 	mutate(Group = ifelse(Group %in% c("A","B"), Group, "_")) %>%
 	mutate(targets_all = n_distinct(target.gene, na.rm = T), genomes_all = n_distinct(ID, na.rm = T)) %>%
 	ungroup %>%
-	distinct(cluster1, cluster2, cluster3, to.target, .keep_all = T) %>%
 	mutate(targets = n_distinct(target.gene, na.rm = T), genomes = n_distinct(ID, na.rm = T)) %>%
-	filter(target.gene %in% gene) %>%
 	group_by(hmm, Taxon, Group) %>%
 	summarize(targets_all = first(targets_all), genomes_all = first(genomes_all), targets = n_distinct(target.gene, na.rm = T), genomes = n_distinct(ID, na.rm = T)) %>%
 	mutate(label = ifelse(targets != genomes, sprintf("%s\n(%s)", targets, genomes), as.character(targets))) %>%
@@ -46,6 +50,6 @@ p2 <- ggplot(gff, aes(fill = paste(hmm, Group), y = targets_pct_all, x = 2)) +
 	facet_grid(Taxon ~ .) +
 	theme_void()
 
-ggsave("counts1.svg", p1, height = 10)
-ggsave("counts2.svg", p2, height = 10)
+ggsave(filtered_file, p1, height = 10)
+ggsave(all_file, p2, height = 10)
 

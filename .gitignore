@@ -1,0 +1,7 @@
+output/*
+.snakemake/
+bak/
+**/GeneMark_hmm*
+**/gms.log
+**/contigs.fna
+*.fai

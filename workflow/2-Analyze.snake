@@ -1,0 +1,212 @@
+
+from os.path import getsize
+from glob import glob
+
+hmms ,= glob_wildcards("hmm_profiles/{hmm}.hmm")
+taxa ,= glob_wildcards("data/{taxa}.txt")
+
+accs = []
+bak_accs = []
+with open("milestones/presearch.txt") as fh:
+	for line in fh:
+		acc, hmm, contig, num_genes = line.split()
+		accs.append(acc)
+		if int(num_genes) > 999:
+			bak_accs.append(acc)
+
+
+
+rule all:
+	input:
+		"output/neighbors.pdf",
+		"output/neighbors.txt",
+		"output/counts_all.svg",
+		expand("contigs/{acc}/targets.pfam.txt", acc = accs),
+		expand("background/{acc}.pfam.txt", acc = bak_accs)
+
+rule extract_contig_fna:
+	input:
+		fasta = "database/{acc}.fna", matches = expand("database/{{acc}}-{hmm}.match", hmm = hmms)
+	output:
+		"contigs/{acc}/contigs.fna"
+	shell:
+		"cat {input.matches} | sed s/_[0-9]*$// | sort -u | xargs samtools faidx {input.fasta} > {output}"
+
+rule extract_contig_gff:
+	input:
+		gff = "database/{acc}.gff", fasta = "contigs/{acc}/contigs.fna"
+	output:
+		"contigs/{acc}/contigs.gff"
+	shell:
+		"""
+		if [ -s manual/database/{wildcards.acc}/contigs_curated.gff ]; then
+			seqkit seq -ni {input.fasta} | grep -wf- manual/database/{wildcards.acc}/contigs_curated.gff > {output}
+		elif [ -s {input.gff} ]; then
+			seqkit seq -ni {input.fasta} | grep -wf- {input.gff} | grep -v 'ID=$' | awk '$4<$5' > {output}
+		else
+			cd contigs/{wildcards.acc}
+			gmsn.pl --format GFF --prok --output /dev/stdout contigs.fna | awk -F'\\t' '{{ sub(/gene_id=/,sprintf("ID=%s_gmsn_",$1),$9) }}1' OFS='\\t' > contigs.gff
+		fi
+		"""
+
+rule extract_contig_faa:
+	input:
+		fna = "contigs/{acc}/contigs.fna",
+		gff = "contigs/{acc}/contigs.gff"
+	output:
+		"contigs/{acc}/contigs.faa"
+	shell:
+		"gffread -VH -y {output} -g {input.fna} {input.gff}"
+
+rule search_faa:
+	input:
+		faa = "contigs/{acc}/contigs.faa", hmm = "hmm_profiles/{hmm}.hmm"
+	output:
+		"contigs/{acc}/{hmm}.out"
+	shell:
+		"hmmsearch {input.hmm} {input.faa} | tr '\\n' '\\r' | grep -v 'No hits detected' | tr '\\r' '\\n' > {output}"
+
+rule match_faa:
+	input:
+		hmmsearch = "contigs/{acc}/{hmm}.out", motif_file = "hmm_profiles/{hmm}.motif"
+	output:
+		"contigs/{acc}/{hmm}.match"
+	script:
+		"scripts/motifs.R"
+
+rule extract_targets:
+	input:
+		ignore = "manual/duplications.txt", matches = expand("contigs/{{acc}}/{hmm}.match", hmm = hmms),
+		faa = "contigs/{acc}/contigs.faa", gff = "contigs/{acc}/contigs.gff"
+	output:
+		faa = "contigs/{acc}/targets.faa", gff = "contigs/{acc}/targets.gff"
+	script:
+		"scripts/extract_targets.py"
+
+rule collect_targets:
+	input:
+		expand("contigs/{acc}/targets.faa", acc = accs)
+	output:
+		"targets/targets.faa"
+	shell:
+		"seqkit rmdup -o {output} {input}"
+
+rule cdhit:
+	input:
+		"targets/targets.faa"
+	output:
+		"targets/targets.cdhit"
+	params:
+		c = 0.8
+	threads:
+		workflow.cores
+	shell:
+		"cdhit -i {input} -o {output} -c {params.c} -d 0 -T {threads} -M 10000"
+
+rule pfam_search:
+	input:
+		"contigs/{acc}/targets.faa"
+	output:
+		"contigs/{acc}/targets.pfam.txt"
+	shell:
+		"""
+		if [ -s {input} ]; then
+			pfam_scan.pl -cpu 1 -dir Pfam -fasta {input} -outfile {output}
+		else
+			touch {output}
+		fi
+		"""
+
+rule background_faa:
+	input:
+		fna = "database/{acc}.fna", gff = "database/{acc}.gff"
+	output:
+		"background/{acc}.faa"
+	shell:
+		"grep -v 'ID=$' {input.gff} | gffread -VH -y {output} -g {input.fna}"
+
+rule background_pfam_search:
+	input:
+		faa = "background/{acc}.faa", dat = "Pfam_filtered/Pfam-A.hmm.dat", h3f = "Pfam_filtered/Pfam-A.hmm.h3f"
+	output:
+		"background/{acc}.pfam.txt"
+	shell:
+		"pfam_scan.pl -cpu 1 -dir Pfam_filtered -fasta {input.faa} -outfile {output}"
+
+rule filter_pfams:
+	input:
+		pfam_txt = expand("contigs/{acc}/targets.pfam.txt", acc = accs),
+		dat = "Pfam/Pfam-A.hmm.dat"
+	output:
+		"Pfam_filtered/Pfam-A.list.txt"
+	params:
+		pfam_num_min = 3
+	script:
+		"scripts/filter_pfam.py"
+
+rule hmmfetch:
+	input:
+		dat = "Pfam/Pfam-A.hmm", txt = "Pfam_filtered/Pfam-A.list.txt"
+	output:
+		"Pfam_filtered/Pfam-A.hmm"
+	shell:
+		"hmmfetch -f {input.dat} {input.txt} > {output}"
+
+rule hmmpress:
+	input:
+		hmm = "Pfam_filtered/Pfam-A.hmm", dat = "Pfam_filtered/Pfam-A.hmm.dat"
+	output:
+		"Pfam_filtered/Pfam-A.hmm.h3f"
+	shell:
+		"hmmpress {input.hmm}"
+
+rule hmm_dat:
+	input:
+		"Pfam/Pfam-A.hmm.dat"
+	output:
+		"Pfam_filtered/Pfam-A.hmm.dat"
+	shell:
+		"cp {input} {output}"
+
+rule collect_neighbors:
+	input:
+		synonyms_file = "resources/synonyms.txt", taxa_txt = expand("data/{taxa}.txt", taxa = taxa),
+		bak_faa  = expand("background/{acc}.faa", acc = bak_accs),
+		bak_pfam = expand("background/{acc}.pfam.txt", acc = bak_accs),
+		pfam     = expand("contigs/{acc}/targets.pfam.txt", acc = accs),
+		gff      = expand("contigs/{acc}/targets.gff", acc = accs),
+		match    = expand("contigs/{acc}/{hmm}.match", hmm = hmms, acc = accs),
+		presearch = "milestones/presearch.txt",
+		groups   = "phylogeny/heliorhodopsin_groups.txt",
+		cdhit    = "targets/targets.cdhit"
+	output:
+		labels_group = "output/labels.group.txt",
+		gff_tsv = "output/gff.tsv"
+	script:
+		"scripts/neighbors-collect.R"
+
+rule analyze_neighbors:
+	input:
+		pfam2go = "resources/pfam2go.txt",
+		clans = "resources/Pfam-A.clans.tsv",
+		labels_group = "output/labels.group.txt"
+	params:
+		rate_threshold = 0.05,
+		to_target_abs_threshold = 4,
+		co_rate_threshold = 0.1,
+		freq_threashold1 = 0.05,
+		freq_threashold2 = 0.02,
+		q_value_threshold = 0.01
+	output:
+		plot = "output/neighbors.pdf", table = "output/neighbors.txt"
+	script:
+		"scripts/neighbors-analyze.R"
+
+rule count_neighbors:
+	input:
+		"output/gff.tsv"
+	output:
+		filtered = "output/counts_filtered.svg",
+		all = "output/counts_all.svg"
+	script:
+		"scripts/neighbors-counts.R"
