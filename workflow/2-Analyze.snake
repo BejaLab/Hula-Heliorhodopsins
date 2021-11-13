@@ -14,13 +14,12 @@ with open("milestones/presearch.txt") as fh:
 		if int(num_genes) > 999:
 			bak_accs.append(acc)
 
-
-
 rule all:
 	input:
-		"output/neighbors.pdf",
+		"output/neighbors.volcano.pdf",
 		"output/neighbors.txt",
-		"output/counts_all.svg",
+		"output/counts_all.pdf",
+		"targets/Heliorhodopsins.blast",
 		expand("contigs/{acc}/targets.pfam.txt", acc = accs),
 		expand("background/{acc}.pfam.txt", acc = bak_accs)
 
@@ -97,7 +96,7 @@ rule cdhit:
 	output:
 		"targets/targets.cdhit"
 	params:
-		c = 0.8
+		c = 0.9
 	threads:
 		workflow.cores
 	shell:
@@ -178,10 +177,13 @@ rule collect_neighbors:
 		match    = expand("contigs/{acc}/{hmm}.match", hmm = hmms, acc = accs),
 		presearch = "milestones/presearch.txt",
 		groups   = "phylogeny/heliorhodopsin_groups.txt",
-		cdhit    = "targets/targets.cdhit"
+		cdhit    = "targets/targets.cdhit",
+		blast    = "targets/Heliorhodopsins.blast"
 	output:
 		labels_group = "output/labels.group.txt",
 		gff_tsv = "output/gff.tsv"
+	params:
+		exclude_groups = [ "C", "X" ]
 	script:
 		"scripts/neighbors-collect.R"
 
@@ -191,14 +193,11 @@ rule analyze_neighbors:
 		clans = "resources/Pfam-A.clans.tsv",
 		labels_group = "output/labels.group.txt"
 	params:
-		rate_threshold = 0.05,
-		to_target_abs_threshold = 4,
-		co_rate_threshold = 0.1,
-		freq_threashold1 = 0.05,
-		freq_threashold2 = 0.02,
-		q_value_threshold = 0.01
+		freq_threashold = 0.05,
+		gene_num_threshold = 3
 	output:
-		plot = "output/neighbors.pdf", table = "output/neighbors.txt"
+		bubble = "output/neighbors.bubble.pdf", table = "output/neighbors.txt",
+		volcano = "output/neighbors.volcano.pdf"
 	script:
 		"scripts/neighbors-analyze.R"
 
@@ -206,7 +205,47 @@ rule count_neighbors:
 	input:
 		"output/gff.tsv"
 	output:
-		filtered = "output/counts_filtered.svg",
-		all = "output/counts_all.svg"
+		filtered = "output/counts_filtered.pdf",
+		all = "output/counts_all.pdf"
 	script:
 		"scripts/neighbors-counts.R"
+
+rule index_targets:
+	input:
+		"targets/targets.faa"
+	output:
+		"targets/targets.faa.fai"
+	shell:
+		"seqkit faidx {input}"
+
+rule heliorhodopsins_extract:
+	input:
+		faa = "targets/targets.faa",
+		fai = "targets/targets.faa.fai",
+		match = expand("contigs/{acc}/Heliorhodopsin.match", acc = accs),
+		ignore = "manual/duplications.txt"
+	output:
+		"targets/Heliorhodopsins.faa"
+	shell:
+		"sort -u {input.match} | grep -vf {input.ignore} | xargs seqkit faidx {input.faa} > {output}"
+
+rule heliorhodopsins_makedb:
+	input:
+		"resources/heliorhodopsin-groups/Heliorhodopsin_with_groups.fasta"
+	output:
+		"resources/heliorhodopsin-groups/Heliorhodopsin_with_groups.fasta.pin"
+	shell:
+		"makeblastdb -in {input} -dbtype prot"
+
+rule heliorhodopsins_blast:
+	input:
+		db  = "resources/heliorhodopsin-groups/Heliorhodopsin_with_groups.fasta",
+		pin = "resources/heliorhodopsin-groups/Heliorhodopsin_with_groups.fasta.pin",
+		query = "targets/Heliorhodopsins.faa"
+	output:
+		"targets/Heliorhodopsins.blast"
+	threads:
+		workflow.cores
+	shell:
+		"blastp -query {input.query} -db {input.db} -out {output} -num_threads {threads} -evalue 1e-10 -max_target_seqs 5 -outfmt '6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore stitle'"
+

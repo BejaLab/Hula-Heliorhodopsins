@@ -6,16 +6,19 @@ library(tools)
 
 input <- snakemake@input
 output <- snakemake@output
+params <- snakemake@params
 
 synonyms_file <- unlist(input["synonyms_file"])
 taxa_txt <- unlist(input["taxa_txt"])
 bak_pfam_files <- unique(unlist(input["bak_pfam"]))
 pfam_files <- unique(unlist(input["pfam"]))
 presearch <- unlist(input["presearch"])
-helio_groups <- unlist(input["groups"])
 clstr <- paste0(unlist(input["cdhit"]), ".clstr")
 gff_files <- unique(unlist(input["gff"]))
 match_files <- unique(unlist(input["match"]))
+blast_file <- unlist(input["blast"])
+
+exclude_groups <- unlist(params["exclude_groups"])
 
 labels_group_file <- unlist(output["labels_group"])
 gff_tsv_file <- unlist(output["gff_tsv"])
@@ -23,10 +26,16 @@ gff_tsv_file <- unlist(output["gff_tsv"])
 filter_empty_dataframes <- function(x) dim(x)[1] > 0
 
 pfam.cols <- c("gene", "aln.start", "aln.end", "env.start", "env.end", "hmm.acc", "hmm.name", "type", "hmm.start", "hmm.end", "hmm.length", "bit.score", "e.value", "significance", "clan")
-blast.cols <- c("qseqid", "sseqid", "pident", "length", "mismatch", "gapopen", "qstart", "qend", "sstart", "send", "evalue", "bitscore")
+blast.cols <- c("qseqid", "sseqid", "pident", "length", "mismatch", "gapopen", "qstart", "qend", "sstart", "send", "evalue", "bitscore", "stitle.id", "stitle.group")
 
 taxa.synonyms <- read.table(synonyms_file, col.names = c("key", "value")) %>%
 	with(setNames(value, key))
+
+groups.blast <- read.table(blast_file, col.names = blast.cols) %>%
+	filter(pident > 60) %>%
+	distinct(target.gene = qseqid, Group = stitle.group) %>%
+	mutate(Group = gsub("[0-9]+$", "", Group)) %>%
+	filter(! Group %in% exclude_groups)
 
 taxdata <- lapply(taxa_txt, readLines) %>%
 	lapply(data.frame) %>%
@@ -59,11 +68,6 @@ pfam <- lapply(pfam_files, read.table, col.names = pfam.cols) %>%
 	bind_rows %>%
 	mutate(clan = recode(clan, No_clan = NA_character_))
 
-groups <- read.table(helio_groups, col.names = c("Representative", "Group"))
-cdhit <- read.cdhit.clstr("phylogeny/targets_Heliorhodopsin_uniprot.cdhit.clstr") %>%
-	left_join(groups, by = "Representative") %>%
-	select(Group, target.gene = Seq.Name)
-
 clusters <- read.cdhit.clstr(clstr) %>%
 	select(cluster = Cluster, Seq.Len, gene = Seq.Name, gene_repr = Representative)
 
@@ -80,8 +84,8 @@ gff <- lapply(gff_files, read.table, sep = "\t", col.names = c("contig", "source
 	extract(attributes, into = c("gene", "target.gene"), regex = "ID=([\\w_.-]+);Target=([\\w_.-]+)") %>%
 	left_join(contigs,  by = "contig") %>%
 	left_join(clusters, by = "gene") %>%
-	left_join(cdhit,    by = "target.gene") %>%
 	left_join(matches,  by = "target.gene") %>%
+	left_join(groups.blast, by = "target.gene") %>%
 	replace_na(list(Group = "")) %>%
 	group_by(target.gene) %>%
 	mutate(target.pos = which(gene == target.gene), target.strand = strand[target.pos],
@@ -94,13 +98,14 @@ gff <- lapply(gff_files, read.table, sep = "\t", col.names = c("contig", "source
 	mutate(co.express = swap.num == 0 | swap.num == 1 & to.target < 0) %>%
 	mutate(cluster1 = cluster[which(to.target == 0)], cluster2 = ifelse(to.min < 0, cluster[which(to.target == -1)], NA), cluster3 = ifelse(to.max > 0, cluster[which(to.target == 1)], NA)) %>%
 	arrange(-to.total) %>%
-	{ write.table(., gff_tsv_file, sep = "\t", row.names = F); (.) } %>%
 	group_by(cluster1, cluster2) %>%
 	fill(cluster3, .direction = "downup") %>%
 	group_by(cluster1, cluster3) %>%
 	fill(cluster2, .direction = "downup") %>%
 	ungroup %>%
-	distinct(cluster1, cluster2, cluster3, to.target, .keep_all = T) %>%
+	mutate(target.unique = paste(cluster1, cluster2, cluster3)) %>%
+	{ write.table(., gff_tsv_file, sep = "\t", row.names = F); (.) } %>%
+	distinct(target.unique, to.target, .keep_all = T) %>%
 	filter(target.gene %in% gene) %>%
 	group_by(hmm, Taxon, Group) %>%
 	mutate(target.num = n_distinct(target.gene, na.rm = T)) %>%
