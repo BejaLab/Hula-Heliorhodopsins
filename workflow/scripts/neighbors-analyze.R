@@ -15,17 +15,15 @@ pfam2go_file <- unlist(input["pfam2go"])
 clans_file   <- unlist(input["clans"])
 labels_groups_file <- unlist(input["labels_group"])
 classifications_file <- unlist(input["classifications"])
-rate.threshold <- unlist(params["rate_threshold"])
-to.target.abs.threshold <- unlist(params["to_target_abs_threshold"])
-co.rate.threshold <- unlist(params["co_rate_threshold"])
 
-freq.threashold <- unlist(params["freq_threashold"])
+freq.threshold <- unlist(params["freq_threshold"])
 gene.num.threshold <- unlist(params["gene_num_threshold"])
 
 bubble_file <- unlist(output["bubble"])
 volcano_file <- unlist(output["volcano"])
 pooled_tests_file <- unlist(output["pooled_tests"])
 all_hmms_file <- unlist(output["all_hmms"])
+bubble_table_file <- unlist(output["bubble_table"])
 
 hmm.names <- list(DTE = "DTE proton pumps", Heliorhodopsin = "Heliorhodopsins")
 
@@ -45,7 +43,6 @@ labels.group <- read.table(labels_groups_file, header = T) %>%
 	mutate(hmm.acc = sub("[.][0-9]+$", "", hmm.acc), co.rate = co.express / label.num.all) %>%
 	left_join(label.desc, by = "hmm.acc") %>%
 	group_by(hmm.acc)
-	# filter(any(freq > rate.threshold), any(to.target.abs.avg < to.target.abs.threshold), any(co.rate > co.rate.threshold))
 
 Shared.Taxa <- ungroup(labels.group) %>%
 	distinct(hmm, Taxon) %>%
@@ -77,17 +74,17 @@ pooled.tests <- mutate(labels.group, Present = target.num.label, Absent = target
 		print(first(x$hmm.acc))
 		helio <- filter(x, hmm == "Heliorhodopsin")
 		dte <- filter(x, hmm == "DTE")
-		data.frame(row.names = c("Heliorhodopsin", "DTE"), Present = c(helio$Present, dte$Present), Absent = c(helio$Absent, pr_xr$Absent)) %>%
+		data.frame(row.names = c("Heliorhodopsin", "DTE"), Present = c(helio$Present, dte$Present), Absent = c(helio$Absent, dte$Absent)) %>%
 			fisher.test %>%
 			with(data.frame(row.names = NULL,
 				select(helio, Absent, Present, N_groups, AB),
-				select(dte, pr_xr.Absent = Absent, pr_xr.Present = Present, pr_xr.N_groups = N_groups),
+				select(dte, dte.Absent = Absent, dte.Present = Present, dte.N_groups = N_groups),
 				p.value.types.pooled = p.value, odds.ratio.types.pooled = estimate, conf.int.lo.types.pooled = conf.int[1], conf.int.hi.types.pooled = conf.int[2],
 				hmm.acc = first(x$hmm.acc)
 			))
 	}) %>% bind_rows %>%
 	mutate(q.value.types.pooled = p.adjust(p.value.types.pooled, method = "fdr")) %>%
-	mutate(Ratio = ifelse(odds.ratio.types.pooled > 1, Present / (Present + Absent), dte.Present / (pr_xr.Present + pr_xr.Absent))) %>%
+	mutate(Ratio = ifelse(odds.ratio.types.pooled > 1, Present / (Present + Absent), dte.Present / (dte.Present + dte.Absent))) %>%
 	mutate(N_groups = ifelse(odds.ratio.types.pooled > 1, N_groups, dte.N_groups)) %>%
 	mutate(Type = ifelse(odds.ratio.types.pooled > 1, "HeR > DTE", "HeR < DTE"))
 
@@ -106,13 +103,13 @@ all.tests <- mutate(labels.group, Present = target.num.label, Absent = target.nu
 		dtes <- filter(x, hmm == "DTE") %>%
 			group_split(1:n())
 		lapply(helios, function(helio) {
-			lapply(dtes, function(pr_xr) {
-				if (helio$Taxon == dte$Taxon & (helio$Present > 1 | pr_xr$Present > 1))
-					data.frame(row.names = c("Heliorhodopsin", "DTE"), Present = c(helio$Present, dte$Present), Absent = c(helio$Absent, pr_xr$Absent)) %>%
+			lapply(dtes, function(dte) {
+				if (helio$Taxon == dte$Taxon & (helio$Present > 1 | dte$Present > 1))
+					data.frame(row.names = c("Heliorhodopsin", "DTE"), Present = c(helio$Present, dte$Present), Absent = c(helio$Absent, dte$Absent)) %>%
 						fisher.test %>%
 						with(data.frame(row.names = NULL,
 							select(helio, Taxon, Group, Absent, Present),
-							select(dte, pr_xr.Absent = Absent, pr_xr.Present = Present, pr_xr.Taxon = Taxon),
+							select(dte, dte.Absent = Absent, dte.Present = Present, dte.Taxon = Taxon),
 							p.value.types = p.value, odds.ratio.types = estimate, conf.int.lo.types = conf.int[1], conf.int.hi.types = conf.int[2],
 							hmm.acc = first(x$hmm.acc)
 						))
@@ -153,9 +150,9 @@ left_join(labels.all, label.desc, by = "hmm.acc") %>%
 labels.plot <- filter(labels.all, target.num.label > 0) %>%
 	group_by(hmm.acc, hmm) %>%
 	mutate(odds.ratio.types.abs = ifelse(hmm == "Heliorhodopsin", odds.ratio.types, 1/odds.ratio.types)) %>%
-	mutate(helio.over = hmm.acc %in% helio.top, dte.over = hmm.acc %in% pr_xr.top) %>%
+	mutate(helio.over = hmm.acc %in% helio.top, dte.over = hmm.acc %in% dte.top) %>%
 	group_by(hmm.acc) %>%
-	mutate(bkg.freq.num = sum(hmm == "Heliorhodopsin" & freq > freq.threashold, na.rm = T), bkg.over = bkg.freq.num >= gene.num.threshold) %>%
+	mutate(bkg.freq.num = sum(hmm == "Heliorhodopsin" & freq > freq.threshold, na.rm = T), bkg.over = bkg.freq.num >= gene.num.threshold) %>%
 	filter(any(bkg.over) | any(dte.over) | any(helio.over)) %>%
 	mutate(category = case_when(any(helio.over) ~ "HeR", any(dte.over) ~ "DTE", any(bkg.over) ~ "Common")) %>%
 	mutate(hmm.label = recode(hmm, !!!hmm.names)) %>%
@@ -166,6 +163,8 @@ labels.plot <- filter(labels.all, target.num.label > 0) %>%
 	left_join(classifications, by = "hmm.acc") %>%
 	arrange(hmm.category, hmm.acc) %>%
 	mutate(row = row_number())
+
+write.table(labels.plot, file = bubble_table_file, sep = "\t", row.names = F)
 
 p <- ggplot(labels.plot, aes(x = reorder(Label.label, -row), y = Taxon.label)) +
 	geom_point(aes(size = freq, color = co.rate)) +

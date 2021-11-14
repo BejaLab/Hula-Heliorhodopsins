@@ -193,11 +193,12 @@ rule analyze_neighbors:
 		labels_group = "output/labels.group.txt",
 		classifications = "resources/classifications.tsv"
 	params:
-		freq_threashold = 0.05,
+		freq_threshold = 0.05,
 		gene_num_threshold = 3
 	output:
 		pooled_tests = "output/pooled_tests.tsv",
 		all_hmms = "output/all_hmms.tsv",
+		bubble_table = "output/neighbors.bubble.tsv",
 		bubble = "output/neighbors.bubble.pdf",
 		volcano = "output/neighbors.volcano.pdf"
 	script:
