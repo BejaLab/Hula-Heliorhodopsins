@@ -17,7 +17,6 @@ with open("milestones/presearch.txt") as fh:
 rule all:
 	input:
 		"output/neighbors.volcano.pdf",
-		"output/neighbors.txt",
 		"output/counts_all.pdf",
 		"targets/Heliorhodopsins.blast",
 		expand("contigs/{acc}/targets.pfam.txt", acc = accs),
@@ -191,12 +190,15 @@ rule analyze_neighbors:
 	input:
 		pfam2go = "resources/pfam2go.txt",
 		clans = "resources/Pfam-A.clans.tsv",
-		labels_group = "output/labels.group.txt"
+		labels_group = "output/labels.group.txt",
+		classifications = "resources/classifications.tsv"
 	params:
 		freq_threashold = 0.05,
 		gene_num_threshold = 3
 	output:
-		bubble = "output/neighbors.bubble.pdf", table = "output/neighbors.txt",
+		pooled_tests = "output/pooled_tests.tsv",
+		all_hmms = "output/all_hmms.tsv",
+		bubble = "output/neighbors.bubble.pdf",
 		volcano = "output/neighbors.volcano.pdf"
 	script:
 		"scripts/neighbors-analyze.R"

@@ -117,7 +117,7 @@ labels <- left_join(gff, pfam, by = "gene") %>%
 	distinct(gene, hmm.acc, .keep_all = T)
 
 data <- select(labels, Taxon, hmm, Group, ID, target.num, target.gene, hmm.acc, to.target, to.target.abs, to.target.sign, to.total, co.express) %>%
-	filter(Group != "" | hmm == "PR_XR")
+	filter(Group != "" | hmm == "DTE")
 # write.table(data, "output/all_data.tsv")
 
 data.bkg <- left_join(bkg.labels, distinct(data, ID, hmm, Taxon, Group), by = "ID") %>%

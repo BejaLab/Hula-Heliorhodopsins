@@ -11,7 +11,7 @@ print(help)
 rule check_files:
 	input:
 		"Pfam/Pfam-A.hmm",
-		expand("hmm_profiles/{hmm}.{ext}", hmm = [ "Heliorhodopsin", "PR_XR" ], ext = [ "hmm", "motif" ]),
+		expand("hmm_profiles/{hmm}.{ext}", hmm = [ "Heliorhodopsin", "DTE" ], ext = [ "hmm", "motif" ]),
 		"wgs",
 		"data",
 		"manual/database",
